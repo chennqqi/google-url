@@ -64,21 +64,6 @@ TEST(URLUtilTest, FindAndCompareScheme) {
   // But when there is no scheme, it should fail.
   EXPECT_FALSE(url_util::FindAndCompareScheme("", 0, "", &found_scheme));
   EXPECT_TRUE(found_scheme == url_parse::Component());
-
-  // When there is a whitespace char in scheme, it should canonicalize the url before
-  // comparison.
-  const char whtspc_str[] = " \r\n\tjav\ra\nscri\tpt:alert(1)";
-  EXPECT_TRUE(url_util::FindAndCompareScheme(
-      whtspc_str, static_cast<int>(strlen(whtspc_str)), "javascript",
-      &found_scheme));
-  EXPECT_TRUE(found_scheme == url_parse::Component(1, 10));
-  
-  // Control characters should be stripped out on the ends, and kept in the middle.
-  const char ctrl_str[] = "\02jav\02scr\03ipt:alert(1)";
-  EXPECT_FALSE(url_util::FindAndCompareScheme(
-      ctrl_str, static_cast<int>(strlen(ctrl_str)), "javascript",
-      &found_scheme));
-  EXPECT_TRUE(found_scheme == url_parse::Component(1, 11));
 }
 
 TEST(URLUtilTest, ReplaceComponents) {
@@ -109,54 +94,5 @@ TEST(URLUtilTest, ReplaceComponents) {
                               &new_parsed);
   url_util::ReplaceComponents("", 0, parsed, replacements, NULL, &output,
                               &new_parsed);
-}
-
-static std::string CheckReplaceScheme(const char* base_url,
-                                      const char* scheme) {
-  // Make sure the input is canonicalized.
-  url_canon::RawCanonOutput<32> original;
-  url_parse::Parsed original_parsed;
-  url_util::Canonicalize(base_url, strlen(base_url), NULL,
-                         &original, &original_parsed);
-
-  url_canon::Replacements<char> replacements;
-  replacements.SetScheme(scheme, url_parse::Component(0, strlen(scheme)));
-
-  std::string output_string;
-  url_canon::StdStringCanonOutput output(&output_string);
-  url_parse::Parsed output_parsed;
-  url_util::ReplaceComponents(original.data(), original.length(),
-                              original_parsed, replacements, NULL,
-                              &output, &output_parsed);
-
-  output.Complete();
-  return output_string;
-}
-
-TEST(URLUtilTest, ReplaceScheme) {
-  EXPECT_EQ("https://google.com/",
-            CheckReplaceScheme("http://google.com/", "https"));
-  EXPECT_EQ("file://google.com/",
-            CheckReplaceScheme("http://google.com/", "file"));
-  EXPECT_EQ("http://home/Build",
-            CheckReplaceScheme("file:///Home/Build", "http"));
-  EXPECT_EQ("javascript:foo",
-            CheckReplaceScheme("about:foo", "javascript"));
-  EXPECT_EQ("://google.com/",
-            CheckReplaceScheme("http://google.com/", ""));
-  EXPECT_EQ("http://google.com/",
-            CheckReplaceScheme("about:google.com", "http"));
-  EXPECT_EQ("http:", CheckReplaceScheme("", "http"));
-
-#ifdef WIN32
-  // Magic Windows drive letter behavior when converting to a file URL.
-  EXPECT_EQ("file:///E:/foo/",
-            CheckReplaceScheme("http://localhost/e:foo/", "file"));
-#endif
-
-  // This will probably change to "about://google.com/" when we fix
-  // http://crbug.com/160 which should also be an acceptable result.
-  EXPECT_EQ("about://google.com/",
-            CheckReplaceScheme("http://google.com/", "about"));
 }
 

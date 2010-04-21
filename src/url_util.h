@@ -38,55 +38,16 @@
 
 namespace url_util {
 
-// Init ------------------------------------------------------------------------
-
-// Initialization is NOT required, it will be implicitly initialized when first
-// used. However, this implicit initialization is threadsafe. If you are using
-// this library in a threaded environment and don't have a consistent "first
-// call" (an example might be calling "AddStandardScheme" with your special
-// application-specific schemes) then you will want to call initialize before
-// spawning any threads.
-//
-// It is OK to call this function more than once, subsequent calls will simply
-// "noop", unless TerminateGoogleUrl() was called in the mean time. This will
-// also be a "noop" if other calls to the library have forced an initialization
-// beforehand.
-void Initialize();
-
-// Cleanup is not required, except some strings may leak. For most user
-// applications, this is fine. If you're using it in a library that may get
-// loaded and unloaded, you'll want to unload to properly clean up your
-// library.
-void Shutdown();
-
 // Schemes --------------------------------------------------------------------
 
 // Adds an application-defined scheme to the internal list of "standard" URL
-// schemes. This function is not threadsafe and can not be called concurrently
-// with any other url_util function. It will assert if the list of standard
-// schemes has been locked (see LockStandardSchemes).
+// schemes.
 void AddStandardScheme(const char* new_scheme);
-
-// Sets a flag to prevent future calls to AddStandardScheme from succeeding.
-//
-// This is designed to help prevent errors for multithreaded applications.
-// Normal usage would be to call AddStandardScheme for your custom schemes at
-// the beginning of program initialization, and then LockStandardSchemes. This
-// prevents future callers from mistakenly calling AddStandardScheme when the
-// program is running with multiple threads, where such usage would be
-// dangerous.
-//
-// We could have had AddStandardScheme use a lock instead, but that would add
-// some platform-specific dependencies we don't otherwise have now, and is
-// overkill considering the normal usage is so simple.
-void LockStandardSchemes();
 
 // Locates the scheme in the given string and places it into |found_scheme|,
 // which may be NULL to indicate the caller does not care about the range.
-//
 // Returns whether the given |compare| scheme matches the scheme found in the
-// input (if any). The |compare| scheme must be a valid canonical scheme or
-// the result of the comparison is undefined.
+// input (if any).
 bool FindAndCompareScheme(const char* str,
                           int str_len,
                           const char* compare,
@@ -109,16 +70,12 @@ inline bool FindAndCompareScheme(const string16& str,
 }
 
 // Returns true if the given string represents a standard URL. This means that
-// either the scheme is in the list of known standard schemes.
-bool IsStandard(const char* spec, const url_parse::Component& scheme);
-bool IsStandard(const char16* spec, const url_parse::Component& scheme);
-
-// TODO(brettw) remove this. This is a temporary compatibility hack to avoid
-// breaking the WebKit build when this version is synced via Chrome.
-inline bool IsStandard(const char* spec, int spec_len,
-                       const url_parse::Component& scheme) {
-  return IsStandard(spec, scheme);
-}
+// either the scheme is in the list of known standard schemes, or there is a
+// "://" following the scheme.
+bool IsStandard(const char* spec, int spec_len,
+                const url_parse::Component& scheme);
+bool IsStandard(const char16* spec, int spec_len,
+                const url_parse::Component& scheme);
 
 // URL library wrappers -------------------------------------------------------
 

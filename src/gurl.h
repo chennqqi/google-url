@@ -63,7 +63,7 @@ class GURL {
   // Constructor for URLs that have already been parsed and canonicalized. This
   // is used for conversions from KURL, for example. The caller must supply all
   // information associated with the URL, which must be correct and consistent.
-  GURL(const char* canonical_spec, size_t canonical_spec_len,
+  GURL(const char* canonical_spec, int canonical_spec_len,
        const url_parse::Parsed& parsed, bool is_valid);
 
   // Returns true when this object represents a valid parsed URL. When not
@@ -204,9 +204,9 @@ class GURL {
   GURL GetOrigin() const;
 
   // Returns true if the scheme for the current URL is a known "standard"
-  // scheme. Standard schemes have an authority and a path section. This
-  // includes file:, which some callers may want to filter out explicitly by
-  // calling SchemeIsFile.
+  // scheme or there is a "://" after it. Standard schemes have an authority
+  // and a path section. This includes file:, which some callers may want to
+  // filter out explicitly by calling SchemeIsFile.
   bool IsStandard() const;
 
   // Returns true if the given parameter (should be lower-case ASCII to match

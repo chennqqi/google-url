@@ -58,24 +58,19 @@ inline bool DoLowerCaseEqualsASCII(Iter a_begin, Iter a_end, const char* b) {
 const char kFileScheme[] = "file";  // Used in a number of places.
 const char kMailtoScheme[] = "mailto";
 
-const int kNumStandardURLSchemes = 7;
+const int kNumStandardURLSchemes = 5;
 const char* kStandardURLSchemes[kNumStandardURLSchemes] = {
   "http",
   "https",
   kFileScheme,  // Yes, file urls can have a hostname!
   "ftp",
   "gopher",
-  "ws",  // WebSocket.
-  "wss",  // WebSocket secure.
 };
 
 // List of the currently installed standard schemes. This list is lazily
 // initialized by InitStandardSchemes and is leaked on shutdown to prevent
 // any destructors from being called that will slow us down or cause problems.
 std::vector<const char*>* standard_schemes = NULL;
-
-// See the LockStandardSchemes declaration in the header.
-bool standard_schemes_locked = false;
 
 // Ensures that the standard_schemes list is initialized, does nothing if it
 // already has values.
@@ -101,9 +96,10 @@ inline bool CompareSchemeComponent(const CHAR* spec,
 }
 
 // Returns true if the given scheme identified by |scheme| within |spec| is one
-// of the registered "standard" schemes.
+// of the registered "standard" schemes. Note that this does not check for
+// "://", use IsStandard for that.
 template<typename CHAR>
-bool DoIsStandard(const CHAR* spec, const url_parse::Component& scheme) {
+bool IsStandardScheme(const CHAR* spec, const url_parse::Component& scheme) {
   if (!scheme.is_nonempty())
     return false;  // Empty or invalid schemes are non-standard.
 
@@ -116,20 +112,34 @@ bool DoIsStandard(const CHAR* spec, const url_parse::Component& scheme) {
   return false;
 }
 
+// Returns true if the stuff following the scheme in the given spec indicates
+// a "standard" URL. The presence of "://" after the scheme indicates that
+// there is a hostname, etc. which we call a standard URL.
+template<typename CHAR>
+bool HasStandardSchemeSeparator(const CHAR* spec, int spec_len,
+                                const url_parse::Component& scheme) {
+  int after_scheme = scheme.end();
+  if (spec_len < after_scheme + 3)
+    return false;
+  return spec[after_scheme] == ':' &&
+         spec[after_scheme + 1] == '/' &&
+         spec[after_scheme + 2] == '/';
+}
+
+template<typename CHAR>
+bool DoIsStandard(const CHAR* spec, int spec_len,
+                  const url_parse::Component& scheme) {
+  return HasStandardSchemeSeparator(spec, spec_len, scheme) ||
+         IsStandardScheme(spec, scheme);
+}
+
 template<typename CHAR>
 bool DoFindAndCompareScheme(const CHAR* str,
                             int str_len,
                             const char* compare,
                             url_parse::Component* found_scheme) {
-  // Before extracting scheme, canonicalize the URL to remove any whitespace.
-  // This matches the canonicalization done in DoCanonicalize function.
-  url_canon::RawCanonOutputT<CHAR> whitespace_buffer;
-  int spec_len;
-  const CHAR* spec = RemoveURLWhitespace(str, str_len,
-                                         &whitespace_buffer, &spec_len);
-
   url_parse::Component our_scheme;
-  if (!url_parse::ExtractScheme(spec, spec_len, &our_scheme)) {
+  if (!url_parse::ExtractScheme(str, str_len, &our_scheme)) {
     // No scheme.
     if (found_scheme)
       *found_scheme = url_parse::Component();
@@ -137,7 +147,7 @@ bool DoFindAndCompareScheme(const CHAR* str,
   }
   if (found_scheme)
     *found_scheme = our_scheme;
-  return CompareSchemeComponent(spec, our_scheme, compare);
+  return CompareSchemeComponent(str, our_scheme, compare);
 }
 
 template<typename CHAR>
@@ -174,7 +184,7 @@ bool DoCanonicalize(const CHAR* in_spec, int in_spec_len,
 #endif
 
   url_parse::Component scheme;
-  if (!url_parse::ExtractScheme(spec, spec_len, &scheme))
+  if(!url_parse::ExtractScheme(spec, spec_len, &scheme))
     return false;
 
   // This is the parsed version of the input URL, we have to canonicalize it
@@ -187,7 +197,7 @@ bool DoCanonicalize(const CHAR* in_spec, int in_spec_len,
                                              charset_converter,
                                              output, output_parsed);
 
-  } else if (DoIsStandard(spec, scheme)) {
+  } else if (IsStandard(spec, spec_len, scheme)) {
     // All "normal" URLs.
     url_parse::ParseStandardURL(spec, spec_len, &parsed_input);
     success = url_canon::CanonicalizeStandardURL(spec, spec_len, parsed_input,
@@ -229,7 +239,7 @@ bool DoResolveRelative(const char* base_spec,
   // See if our base URL should be treated as "standard".
   bool standard_base_scheme =
       base_parsed.scheme.is_nonempty() &&
-      DoIsStandard(base_spec, base_parsed.scheme);
+      IsStandard(base_spec, base_spec_len, base_parsed.scheme);
 
   bool is_relative;
   url_parse::Component relative_component;
@@ -265,111 +275,53 @@ bool DoReplaceComponents(const char* spec,
                          url_canon::CharsetConverter* charset_converter,
                          url_canon::CanonOutput* output,
                          url_parse::Parsed* out_parsed) {
-  // If the scheme is overridden, just do a simple string substitution and
-  // reparse the whole thing. There are lots of edge cases that we really don't
-  // want to deal with. Like what happens if I replace "http://e:8080/foo"
-  // with a file. Does it become "file:///E:/8080/foo" where the port number
-  // becomes part of the path? Parsing that string as a file URL says "yes"
-  // but almost no sane rule for dealing with the components individually would
-  // come up with that.
-  //
-  // Why allow these crazy cases at all? Programatically, there is almost no
-  // case for replacing the scheme. The most common case for hitting this is
-  // in JS when building up a URL using the location object. In this case, the
-  // JS code expects the string substitution behavior:
-  //   http://www.w3.org/TR/2008/WD-html5-20080610/structured.html#common3
-  if (replacements.IsSchemeOverridden()) {
-    // Canonicalize the new scheme so it is 8-bit and can be concatenated with
-    // the existing spec.
-    url_canon::RawCanonOutput<128> scheme_replaced;
-    url_parse::Component scheme_replaced_parsed;
-    url_canon::CanonicalizeScheme(
-        replacements.sources().scheme,
-        replacements.components().scheme,
-        &scheme_replaced, &scheme_replaced_parsed);
+  // Note that we dispatch to the parser according the the scheme type of
+  // the OUTPUT URL. Normally, this is the same as our scheme, but if the
+  // scheme is being overridden, we need to test that.
 
-    // We can assume that the input is canonicalized, which means it always has
-    // a colon after the scheme (or where the scheme would be).
-    int spec_after_colon = parsed.scheme.is_valid() ? parsed.scheme.end() + 1
-                                                    : 1;
-    if (spec_len - spec_after_colon > 0) {
-      scheme_replaced.Append(&spec[spec_after_colon],
-                             spec_len - spec_after_colon);
-    }
-
-    // We now need to completely re-parse the resulting string since its meaning
-    // may have changed with the different scheme.
-    url_canon::RawCanonOutput<128> recanonicalized;
-    url_parse::Parsed recanonicalized_parsed;
-    DoCanonicalize(scheme_replaced.data(), scheme_replaced.length(),
-                   charset_converter,
-                   &recanonicalized, &recanonicalized_parsed);
-
-    // Recurse using the version with the scheme already replaced. This will now
-    // use the replacement rules for the new scheme.
-    //
-    // Warning: this code assumes that ReplaceComponents will re-check all
-    // components for validity. This is because we can't fail if DoCanonicalize
-    // failed above since theoretically the thing making it fail could be
-    // getting replaced here. If ReplaceComponents didn't re-check everything,
-    // we wouldn't know if something *not* getting replaced is a problem.
-    // If the scheme-specific replacers are made more intelligent so they don't
-    // re-check everything, we should instead recanonicalize the whole thing
-    // after this call to check validity (this assumes replacing the scheme is
-    // much much less common than other types of replacements, like clearing the
-    // ref).
-    url_canon::Replacements<CHAR> replacements_no_scheme = replacements;
-    replacements_no_scheme.SetScheme(NULL, url_parse::Component());
-    return DoReplaceComponents(recanonicalized.data(), recanonicalized.length(),
-                               recanonicalized_parsed, replacements_no_scheme,
-                               charset_converter, output, out_parsed);
-  }
-
-  // If we get here, then we know the scheme doesn't need to be replaced, so can
-  // just key off the scheme in the spec to know how to do the replacements.
-  if (CompareSchemeComponent(spec, parsed.scheme, kFileScheme)) {
+  if (// Either the scheme is not replaced and the old one is a file,
+      (!replacements.IsSchemeOverridden() &&
+       CompareSchemeComponent(spec, parsed.scheme, kFileScheme)) ||
+      // ...or it is being replaced and the new one is a file.
+      (replacements.IsSchemeOverridden() &&
+       CompareSchemeComponent(replacements.sources().scheme,
+                              replacements.components().scheme,
+                              kFileScheme))) {
     return url_canon::ReplaceFileURL(spec, parsed, replacements,
                                      charset_converter, output, out_parsed);
   }
-  if (DoIsStandard(spec, parsed.scheme)) {
+
+  if (// Either the scheme is not replaced and the old one is standard,
+      (!replacements.IsSchemeOverridden() &&
+       IsStandard(spec, spec_len, parsed.scheme)) ||
+      // ...or it is being replaced and the new one is standard.
+      (replacements.IsSchemeOverridden() &&
+       IsStandardScheme(replacements.sources().scheme,
+                        replacements.components().scheme))) {
+    // Standard URL with all parts.
     return url_canon::ReplaceStandardURL(spec, parsed, replacements,
                                          charset_converter, output, out_parsed);
   }
-  if (CompareSchemeComponent(spec, parsed.scheme, kMailtoScheme)) {
+
+  if (// Either the scheme is not replaced and the old one is mailto,
+      (!replacements.IsSchemeOverridden() &&
+       CompareSchemeComponent(spec, parsed.scheme, kMailtoScheme)) ||
+      // ...or it is being replaced and the new one is a mailto.
+      (replacements.IsSchemeOverridden() &&
+       CompareSchemeComponent(replacements.sources().scheme,
+                              replacements.components().scheme,
+                              kMailtoScheme))) {
      return url_canon::ReplaceMailtoURL(spec, parsed, replacements,
                                         output, out_parsed);
   }
 
-  // Default is a path URL.
   return url_canon::ReplacePathURL(spec, parsed, replacements,
                                    output, out_parsed);
 }
 
 }  // namespace
 
-void Initialize() {
-  InitStandardSchemes();
-}
-
-void Shutdown() {
-  if (standard_schemes) {
-    delete standard_schemes;
-    standard_schemes = NULL;
-  }
-}
-
 void AddStandardScheme(const char* new_scheme) {
-  // If this assert triggers, it means you've called AddStandardScheme after
-  // LockStandardSchemes have been called (see the header file for
-  // LockStandardSchemes for more).
-  //
-  // This normally means you're trying to set up a new standard scheme too late
-  // in your application's init process. Locate where your app does this
-  // initialization and calls LockStandardScheme, and add your new standard
-  // scheme there.
-  DCHECK(!standard_schemes_locked) <<
-      "Trying to add a standard scheme after the list has been locked.";
-
   size_t scheme_len = strlen(new_scheme);
   if (scheme_len == 0)
     return;
@@ -383,16 +335,14 @@ void AddStandardScheme(const char* new_scheme) {
   standard_schemes->push_back(dup_scheme);
 }
 
-void LockStandardSchemes() {
-  standard_schemes_locked = true;
+bool IsStandard(const char* spec, int spec_len,
+                const url_parse::Component& scheme) {
+  return DoIsStandard(spec, spec_len, scheme);
 }
 
-bool IsStandard(const char* spec, const url_parse::Component& scheme) {
-  return DoIsStandard(spec, scheme);
-}
-
-bool IsStandard(const char16* spec, const url_parse::Component& scheme) {
-  return DoIsStandard(spec, scheme);
+bool IsStandard(const char16* spec, int spec_len,
+                const url_parse::Component& scheme) {
+  return DoIsStandard(spec, spec_len, scheme);
 }
 
 bool FindAndCompareScheme(const char* str,
