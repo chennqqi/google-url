@@ -32,32 +32,6 @@
 #ifndef GOOGLEURL_SRC_URL_CANON_ICU_H__
 #define GOOGLEURL_SRC_URL_CANON_ICU_H__
 
-#include "googleurl/src/url_canon.h"
-
-typedef struct UConverter UConverter;
-
-namespace url_canon {
-
-// An implementation of CharsetConverter that implementations can use to
-// interface the canonicalizer with ICU's conversion routines.
-class ICUCharsetConverter : public CharsetConverter {
- public:
-  // Constructs a converter using an already-existing ICU character set
-  // converter. This converter is NOT owned by this object; the lifetime must
-  // be managed by the creator such that it is alive as long as this is.
-  GURL_API ICUCharsetConverter(UConverter* converter);
-
-  GURL_API virtual ~ICUCharsetConverter();
-
-  GURL_API virtual void ConvertFromUTF16(const char16* input,
-                                         int input_len,
-                                         CanonOutput* output);
-
- private:
-  // The ICU converter, not owned by this class.
-  UConverter* converter_;
-};
-
-}  // namespace url_canon
+#include "url/url_canon_icu.h"
 
 #endif  // GOOGLEURL_SRC_URL_CANON_ICU_H__

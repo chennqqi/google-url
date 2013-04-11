@@ -30,27 +30,6 @@
 #ifndef GOOGLEURL_SRC_URL_UTIL_INTERNAL_H__
 #define GOOGLEURL_SRC_URL_UTIL_INTERNAL_H__
 
-#include <string>
-
-#include "base/string16.h"
-#include "googleurl/src/url_common.h"
-#include "googleurl/src/url_parse.h"
-
-namespace url_util {
-
-extern const char kFileScheme[];
-extern const char kFileSystemScheme[];
-extern const char kMailtoScheme[];
-
-// Given a string and a range inside the string, compares it to the given
-// lower-case |compare_to| buffer.
-bool CompareSchemeComponent(const char* spec,
-                            const url_parse::Component& component,
-                            const char* compare_to);
-bool CompareSchemeComponent(const char16* spec,
-                            const url_parse::Component& component,
-                            const char* compare_to);
-
-}  // namespace url_util
+#include "url/url_util_internal.h"
 
 #endif  // GOOGLEURL_SRC_URL_UTIL_INTERNAL_H__
